@@ -1,0 +1,11 @@
+# Markdown Posts
+posts/*.md
+
+# Build
+jblog
+
+# VS Code
+*.code-workspace
+
+# direnv
+.envrc

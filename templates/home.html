@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Blog</title>
+    <style>
+        body {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: 'Arial', sans-serif;
+            background-color: #ffffff;
+            color: #333;
+        }
+        .post {
+            margin-bottom: 20px;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .date {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .nav {
+            margin-bottom: 20px;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        a {
+            color: #1a73e8;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <h1 style="margin: 0; display: inline;">Blog</h1>
+        {{if .IsAuthenticated}}
+            <span style="float: right;">
+                <a href="/admin">New Post</a> |
+                <a href="/logout">Logout</a>
+            </span>
+        {{else}}
+            <span style="float: right;">
+                <a href="/login">Login</a>
+            </span>
+        {{end}}
+    </div>
+
+    {{range .Posts}}
+    <div class="post">
+        <h2><a href="/post/{{.Filename}}">{{.Title}}</a></h2>
+        <div class="date">{{.Date.Format "January 2, 2006"}}</div>
+    </div>
+    {{end}}
+</body>
+</html>

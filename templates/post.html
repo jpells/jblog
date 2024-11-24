@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{.Title}} - Blog</title>
+    <style>
+        body {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: 'Arial', sans-serif;
+            background-color: #ffffff;
+            color: #333;
+        }
+        .date {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .content {
+            line-height: 1.6;
+        }
+        .back {
+            margin-bottom: 20px;
+        }
+        a {
+            color: #1a73e8;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="back"><a href="/">← Back to Home</a></div>
+    <h1>{{.Title}}</h1>
+    <div class="date">{{.Date.Format "January 2, 2006"}}</div>
+    <div class="content">
+        {{.Content}}
+    </div>
+</body>
+</html>

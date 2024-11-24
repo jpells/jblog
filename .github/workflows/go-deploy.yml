@@ -1,0 +1,45 @@
+name: Go Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install taskfile
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Add SSH key
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.AD_SSH_KEY }}
+
+      - name: Add known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ssh-$AD_USER.alwaysdata.net >> ~/.ssh/known_hosts
+        env:
+          AD_ACCOUNT: ${{ secrets.AD_ACCOUNT }}
+          AD_USER: ${{ secrets.AD_USER }}
+
+      - name: Deploy
+        run: task deploy
+        env:
+          AD_ACCOUNT: ${{ secrets.AD_ACCOUNT }}
+          AD_USER: ${{ secrets.AD_USER }}
+          AD_API_KEY: ${{ secrets.AD_API_KEY }}
+          AD_SITE_ID: ${{ secrets.AD_SITE_ID }}

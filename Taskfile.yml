@@ -1,0 +1,63 @@
+version: '3'
+
+tasks:
+  run:
+    desc: Run the application
+    cmds:
+      - go run main.go
+    env:
+      GO_ENV: development
+
+  build:
+    desc: Build the application
+    cmds:
+      - env GOOS=linux GOARCH=amd64 go build -o jblog
+    env:
+      GO_ENV: production
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+    env:
+      GO_ENV: test
+
+  clean:
+    desc: Clean up the build artifacts
+    cmds:
+      - rm -f jblog
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run
+
+  fmt:
+    desc: Format the code
+    cmds:
+      - go fmt ./...
+
+  install-deps:
+    desc: Install dependencies
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  all:
+    desc: Run all tasks
+    deps:
+      - install-deps
+      - lint
+      - fmt
+      - test
+      - build
+
+  deploy:
+    desc: deploy
+    cmds:
+      - task: all
+      - ssh $AD_USER@ssh-$AD_USER.alwaysdata.net "rm /home/$AD_USER/jblog"
+      - scp jblog $AD_USER@ssh-$AD_USER.alwaysdata.net:/home/$AD_USER/
+      - curl -X POST --basic --user "$AD_API_KEY account=$AD_USER:" "https://api.alwaysdata.com/v1/site/$AD_SITE_ID/restart/"
+    env:
+      GO_ENV: production

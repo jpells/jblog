@@ -1,0 +1,69 @@
+linters:
+  enable:
+    - asciicheck     # Checks for non-ASCII characters
+    - bodyclose      # Checks whether HTTP response bodies are closed
+    - dogsled        # Checks for assignments with too many blank identifiers
+    - dupl           # Detects code duplication
+    - errcheck       # Checks for unchecked errors
+    - exportloopref  # Checks for pointers to enclosing loop variables
+    - forbidigo      # Forbids the use of certain identifiers
+    - gocognit       # Checks the cognitive complexity of functions
+    - goconst        # Finds repeated strings that could be replaced by constants
+    - gocritic       # Provides a collection of various checks
+    - gocyclo        # Computes the cyclomatic complexity of functions
+    - godox          # Checks for TODO comments that should be addressed
+    - gofmt          # Formats Go code
+    - goimports      # Checks import formatting and adds missing imports
+    - gosimple       # Simplifies Go code
+    - govet          # Reports suspicious constructs
+    - ineffassign    # Detects ineffectual assignments
+    - lll            # Checks for long lines
+    - misspell       # Finds commonly misspelled words
+    - nakedret       # Finds naked returns in functions greater than a specified length
+    - nestif         # Detects deeply nested if statements
+    - prealloc       # Suggests slice preallocation opportunities
+    - revive         # Replacement for deprecated golint
+    - rowserrcheck   # Checks for ignored errors in database rows
+    - sqlclosecheck  # Checks for unclosed SQL rows and statements
+    - staticcheck    # Static analysis checks
+    - stylecheck     # Checks for style issues
+    - unconvert      # Detects unnecessary type conversions
+    - unparam        # Finds unused function parameters
+    - unused         # Finds unused variables, constants, functions, etc.
+    - whitespace     # Checks for unnecessary whitespace
+    - wsl            # Checks for whitespace issues
+
+linters-settings:
+  gocyclo:
+    min-complexity: 10
+
+  lll:
+    line-length: 120
+
+  nakedret:
+    max-func-lines: 30
+
+  revive:
+    # Configure revive rules
+    rules:
+      - name: error-naming       # Ensures error variables are named appropriately
+        severity: warning
+        disabled: false
+      - name: exported           # Ensures all exported functions have comments
+        severity: warning
+        disabled: false
+      - name: package-comments   # Ensures all packages have package comments
+        severity: warning
+        disabled: false
+
+  whitespace:
+    multi-if: false
+
+run:
+  tests: true
+  timeout: 5m  # Set a timeout for the linter run
+
+issues:
+  exclude-use-default: false  # Use default exclusion rules
+  max-issues-per-linter: 50   # Limit the number of issues per linter
+  max-same-issues: 3          # Limit the number of same issues

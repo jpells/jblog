@@ -15,6 +15,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gomarkdown/markdown"
+	"github.com/gorilla/csrf"
 	"github.com/gorilla/securecookie"
 )
 
@@ -33,6 +34,7 @@ var (
 	hashKey      = []byte(getEnvOrDefault("HASH_KEY", "very-secret-32-byte-long-key-32-"))
 	blockKey     = []byte(getEnvOrDefault("BLOCK_KEY", "a-32-byte-long-key-for-block-32-"))
 	sCookie      = securecookie.New(hashKey, blockKey)
+	csrfKey      = []byte(getEnvOrDefault("CSRF_KEY", "32-byte-long-auth-key"))
 )
 
 //go:embed templates/*
@@ -55,8 +57,8 @@ func main() {
 		// Set up HTTP handlers
 		router := setupHandlers()
 
-		// Wrap the router with security headers middleware
-		secureRouter := withSecurityHeaders(router)
+		// Wrap the router with security middleware
+		secureRouter := withCsrf(withSecurityHeaders(router))
 
 		log.Println("Starting server on :8100")
 		log.Fatal(http.ListenAndServe("[::]:8100", withSentry(secureRouter)))
@@ -91,6 +93,22 @@ func withSecurityHeaders(handler http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 		handler.ServeHTTP(w, r)
 	})
+}
+
+// withCsrf is a middleware that adds gorilla csrf protection
+func withCsrf(handler http.Handler) http.Handler {
+	options := []csrf.Option{
+		csrf.Secure(isProduction),
+	}
+
+	if isProduction {
+		options = append(options, csrf.SameSite(csrf.SameSiteStrictMode))
+	}
+
+	return csrf.Protect(
+		csrfKey,
+		options...,
+	)(handler)
 }
 
 // withSentry is a middleware that recovers from panics and reports them to Sentry
@@ -156,7 +174,14 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	log.Println("Handling login request with method:", r.Method)
 
 	if r.Method == "GET" {
-		renderTemplate(w, "templates/login.html", nil)
+		data := struct {
+			CSRFField template.HTML
+		}{
+			CSRFField: csrf.TemplateField(r),
+		}
+
+		renderTemplate(w, "templates/login.html", data)
+
 		return
 	}
 
@@ -190,7 +215,14 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleAdmin handles the admin page request
 func handleAdmin(w http.ResponseWriter, r *http.Request) {
 	log.Println("Handling admin page request")
-	renderTemplate(w, "templates/admin.html", nil)
+
+	data := struct {
+		CSRFField template.HTML
+	}{
+		CSRFField: csrf.TemplateField(r),
+	}
+
+	renderTemplate(w, "templates/admin.html", data)
 }
 
 // handleCreate handles the creation of a new blog post

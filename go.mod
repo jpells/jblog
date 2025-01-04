@@ -5,7 +5,9 @@ go 1.22.2
 require (
 	github.com/getsentry/sentry-go v0.29.1
 	github.com/gomarkdown/markdown v0.0.0-20241105142532-d03b89096d81
+	github.com/gorilla/csrf v1.7.2
 	github.com/gorilla/securecookie v1.1.2
+	golang.org/x/net v0.23.0
 )
 
 require (

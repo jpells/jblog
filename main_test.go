@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +63,7 @@ func testHandleLoginPostValid(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusSeeOther)
 	checkRedirectLocation(t, rr, "/admin")
-	checkCookie(t, rr, "auth", base64.StdEncoding.EncodeToString([]byte(username+":"+password)))
+	checkCookie(t, rr, "auth", map[string]string{"username": username, "password": password})
 }
 
 func TestHandleLogout(t *testing.T) {
@@ -145,7 +145,14 @@ func TestBasicAuth(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusUnauthorized)
 
-	req.AddCookie(&http.Cookie{Name: "auth", Value: base64.StdEncoding.EncodeToString([]byte(username + ":" + password))})
+	value := map[string]string{"username": username, "password": password}
+
+	encoded, err := sCookie.Encode("auth", value)
+	if err != nil {
+		t.Fatal("Error encoding auth cookie:", err)
+	}
+
+	req.AddCookie(&http.Cookie{Name: "auth", Value: encoded})
 
 	rr = httptest.NewRecorder()
 
@@ -167,7 +174,15 @@ func TestIsUserAuthenticated(t *testing.T) {
 	}
 
 	req, _ = createRequestResponse("GET", "/", nil)
-	req.AddCookie(&http.Cookie{Name: "auth", Value: base64.StdEncoding.EncodeToString([]byte(username + ":" + password))})
+
+	value := map[string]string{"username": username, "password": password}
+
+	encoded, err := sCookie.Encode("auth", value)
+	if err != nil {
+		t.Fatal("Error encoding auth cookie:", err)
+	}
+
+	req.AddCookie(&http.Cookie{Name: "auth", Value: encoded})
 
 	if !isUserAuthenticated(req) {
 		t.Error("User should be authenticated with a valid cookie")
@@ -197,7 +212,7 @@ func checkRedirectLocation(t *testing.T, rr *httptest.ResponseRecorder, expected
 	}
 }
 
-func checkCookie(t *testing.T, rr *httptest.ResponseRecorder, name, expectedValue string) {
+func checkCookie(t *testing.T, rr *httptest.ResponseRecorder, name string, expectedValue map[string]string) {
 	res := rr.Result()
 	defer func() {
 		err := res.Body.Close()
@@ -215,8 +230,13 @@ func checkCookie(t *testing.T, rr *httptest.ResponseRecorder, name, expectedValu
 		t.Errorf("Expected cookie name '%s', got %s", name, cookies[0].Name)
 	}
 
-	if cookies[0].Value != expectedValue {
-		t.Errorf("Expected cookie value '%s', got '%s'", expectedValue, cookies[0].Value)
+	value := make(map[string]string)
+	if err := sCookie.Decode(name, cookies[0].Value, &value); err != nil {
+		t.Errorf("Error decoding cookie: %v", err)
+	}
+
+	if !reflect.DeepEqual(value, expectedValue) {
+		t.Errorf("Expected cookie value '%v', got '%v'", expectedValue, value)
 	}
 }
 

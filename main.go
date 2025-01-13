@@ -4,7 +4,6 @@ package main
 import (
 	"crypto/subtle"
 	"embed"
-	"encoding/base64"
 	"html/template"
 	"log"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/getsentry/sentry-go"
 	"github.com/gomarkdown/markdown"
+	"github.com/gorilla/securecookie"
 )
 
 // BlogPost represents a single blog post
@@ -30,6 +30,9 @@ var (
 	username     = getEnvOrDefault("JBLOG_USERNAME", "admin")
 	password     = getEnvOrDefault("JBLOG_PASSWORD", "changeme")
 	isProduction = getEnvOrDefault("GO_ENV", "development") == "production"
+	hashKey      = []byte(getEnvOrDefault("HASH_KEY", "very-secret-32-byte-long-key-32-"))
+	blockKey     = []byte(getEnvOrDefault("BLOCK_KEY", "a-32-byte-long-key-for-block-32-"))
+	sCookie      = securecookie.New(hashKey, blockKey)
 )
 
 //go:embed templates/*
@@ -287,24 +290,15 @@ func basicAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 // isUserAuthenticated checks if the user is authenticated
 func isUserAuthenticated(r *http.Request) bool {
-	cookie, err := r.Cookie("auth")
-	if err != nil {
-		return false
+	if cookie, err := r.Cookie("auth"); err == nil {
+		value := make(map[string]string)
+		if err = sCookie.Decode("auth", cookie.Value, &value); err == nil {
+			return subtle.ConstantTimeCompare([]byte(value["username"]), []byte(username)) == 1 &&
+				subtle.ConstantTimeCompare([]byte(value["password"]), []byte(password)) == 1
+		}
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(cookie.Value)
-	if err != nil {
-		log.Println("Error decoding auth cookie:", err)
-		return false
-	}
-
-	parts := strings.SplitN(string(decoded), ":", 2)
-	if len(parts) != 2 {
-		return false
-	}
-
-	return subtle.ConstantTimeCompare([]byte(parts[0]), []byte(username)) == 1 &&
-		subtle.ConstantTimeCompare([]byte(parts[1]), []byte(password)) == 1
+	return false
 }
 
 // authenticateUser checks the provided username and password
@@ -315,9 +309,20 @@ func authenticateUser(userUsername, userPassword string) bool {
 
 // setAuthCookie sets the authentication cookie
 func setAuthCookie(w http.ResponseWriter) {
+	value := map[string]string{
+		"username": username,
+		"password": password,
+	}
+
+	encoded, err := sCookie.Encode("auth", value)
+	if err != nil {
+		log.Println("Error encoding auth cookie:", err)
+		return
+	}
+
 	cookie := &http.Cookie{
 		Name:     "auth",
-		Value:    base64.StdEncoding.EncodeToString([]byte(username + ":" + password)),
+		Value:    encoded,
 		Path:     "/",
 		MaxAge:   3600, // 1 hour
 		HttpOnly: true,

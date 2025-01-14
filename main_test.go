@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/csrf"
+	"golang.org/x/net/html"
 )
 
 // Test Handlers
@@ -34,13 +38,16 @@ func TestHandleLogin(t *testing.T) {
 	t.Run("GET /login", testHandleLoginGet)
 	t.Run("POST /login with invalid credentials", testHandleLoginPostInvalid)
 	t.Run("POST /login with valid credentials", testHandleLoginPostValid)
+	t.Run("/login using CSRF", testHandleLoginCsrf)
 }
 
 func testHandleLoginGet(t *testing.T) {
 	req, rr := createRequestResponse("GET", "/login", nil)
-	handler := http.HandlerFunc(handleLogin)
+	csrfMiddleware := csrf.Protect(csrfKey)
+	handler := csrfMiddleware(http.HandlerFunc(handleLogin))
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusOK)
+	checkCsrfFormToken(t, rr)
 }
 
 func testHandleLoginPostInvalid(t *testing.T) {
@@ -66,6 +73,41 @@ func testHandleLoginPostValid(t *testing.T) {
 	checkCookie(t, rr, "auth", map[string]string{"username": username, "password": password})
 }
 
+func testHandleLoginCsrf(t *testing.T) {
+	handler := withCsrf(http.HandlerFunc(handleLogin))
+
+	req, rr := createRequestResponse("GET", "/login", nil)
+	handler.ServeHTTP(rr, req)
+
+	csrfCookie := extractCsrfCookie(t, rr)
+	if csrfCookie == nil {
+		t.Fatal("CSRF cookie not found")
+	}
+
+	csrfToken, err := extractCsrfTokenFromHTML(rr.Body.String())
+	if err != nil {
+		t.Fatal("Error extracting CSRF token from HTML:", err)
+	}
+
+	// Test without CSRF token
+	req, rr = createRequestResponse("POST", "/login", strings.NewReader("username="+username+"&password="+password))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	handler.ServeHTTP(rr, req)
+
+	checkStatusCode(t, rr, http.StatusForbidden)
+
+	// Test with CSRF token
+	req, rr = createRequestResponse("POST", "/login", strings.NewReader("username="+username+"&password="+password))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.AddCookie(csrfCookie)
+	handler.ServeHTTP(rr, req)
+
+	checkStatusCode(t, rr, http.StatusSeeOther)
+	checkRedirectLocation(t, rr, "/admin")
+	checkCookie(t, rr, "auth", map[string]string{"username": username, "password": password})
+}
+
 func TestHandleLogout(t *testing.T) {
 	req, rr := createRequestResponse("GET", "/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "auth", Value: "dummy-auth-value"})
@@ -79,9 +121,11 @@ func TestHandleLogout(t *testing.T) {
 
 func TestHandleAdmin(t *testing.T) {
 	req, rr := createRequestResponse("GET", "/admin", nil)
-	handler := http.HandlerFunc(handleAdmin)
+	csrfMiddleware := csrf.Protect(csrfKey)
+	handler := csrfMiddleware(http.HandlerFunc(handleAdmin))
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusOK)
+	checkCsrfFormToken(t, rr)
 }
 
 func TestHandleCreate(t *testing.T) {
@@ -221,17 +265,17 @@ func checkCookie(t *testing.T, rr *httptest.ResponseRecorder, name string, expec
 		}
 	}()
 
-	cookies := res.Cookies()
-	if len(cookies) != 1 {
-		t.Errorf("Expected 1 cookie, got %d", len(cookies))
-	}
+	var cookieValue string
 
-	if cookies[0].Name != name {
-		t.Errorf("Expected cookie name '%s', got %s", name, cookies[0].Name)
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == name {
+			cookieValue = cookie.Value
+			break
+		}
 	}
 
 	value := make(map[string]string)
-	if err := sCookie.Decode(name, cookies[0].Value, &value); err != nil {
+	if err := sCookie.Decode(name, cookieValue, &value); err != nil {
 		t.Errorf("Error decoding cookie: %v", err)
 	}
 
@@ -284,4 +328,79 @@ func checkFileExists(t *testing.T, path string) {
 	if _, err := os.Stat(path); err != nil {
 		t.Error("Post file was not created")
 	}
+}
+
+// checkCsrfFormToken checks if the CSRF token is present in the form.
+func checkCsrfFormToken(t *testing.T, rr *httptest.ResponseRecorder) {
+	if !strings.Contains(rr.Body.String(), `name="gorilla.csrf.Token"`) {
+		t.Error("CSRF token not found in form")
+	}
+}
+
+// extractCsrfCookie extracts the CSRF cookie from the Set-Cookie header.
+func extractCsrfCookie(t *testing.T, rr *httptest.ResponseRecorder) *http.Cookie {
+	res := rr.Result()
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			// Handle the error if needed
+			t.Errorf("Error closing response body: %v", err)
+		}
+	}()
+
+	for _, cookie := range res.Cookies() {
+		if cookie.Name == "_gorilla_csrf" {
+			return cookie
+		}
+	}
+
+	return nil
+}
+
+// extractCsrfTokenFromHTML extracts the CSRF token from the HTML response body.
+func extractCsrfTokenFromHTML(htmlBody string) (string, error) {
+	doc, err := html.Parse(strings.NewReader(htmlBody))
+	if err != nil {
+		return "", err
+	}
+
+	csrfToken, found := findCsrfToken(doc)
+	if !found {
+		return "", fmt.Errorf("CSRF token not found in HTML")
+	}
+
+	return csrfToken, nil
+}
+
+// findCsrfToken recursively searches for the CSRF token in the HTML nodes.
+func findCsrfToken(n *html.Node) (string, bool) {
+	if n.Type == html.ElementNode && n.Data == "input" {
+		if name, value := getInputNameAndValue(n); name == "gorilla.csrf.Token" {
+			return value, true
+		}
+	}
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if token, found := findCsrfToken(c); found {
+			return token, true
+		}
+	}
+
+	return "", false
+}
+
+// getInputNameAndValue extracts the name and value attributes from an input element.
+func getInputNameAndValue(n *html.Node) (string, string) {
+	var name, value string
+
+	for _, attr := range n.Attr {
+		if attr.Key == "name" {
+			name = attr.Val
+		}
+
+		if attr.Key == "value" {
+			value = attr.Val
+		}
+	}
+
+	return name, value
 }

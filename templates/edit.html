@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>New - Post</title>
+    <title>Edit Post - Blog</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
     <style>
         body {
@@ -51,40 +51,23 @@
     </style>
 </head>
 <body>
-    <div class="nav">
-        <h1>New Post</h1>
-        <p><a href="/">← Back to Home</a></p>
-    </div>
-    
-    <form method="POST" action="/create" id="postForm">
-        {{ .CSRFField }}
+    <div class="back"><a href="/post/{{.Filename}}">← Back to Post</a></div>
+    <h1>Edit Post</h1>
+    <form method="POST" action="/edit/{{.Filename}}">
+        {{.CSRFField}}
         <div class="form-group">
             <label for="title">Title:</label>
-            <input type="text" id="title" name="title" required>
+            <input type="text" id="title" name="title" value="{{.Title}}" required>
         </div>
         <div class="form-group">
             <label for="content">Content:</label>
-            <textarea id="content" name="content"></textarea>
+            <textarea id="content" name="content" required>{{.Content}}</textarea>
         </div>
-        <button type="submit">Create Post</button>
+        <button type="submit">Save</button>
     </form>
     <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
     <script>
-        var easyMDE = new EasyMDE({ element: document.getElementById("content") });
-
-        document.getElementById('postForm').addEventListener('submit', function(event) {
-            var content = easyMDE.value();
-            if (!content) {
-                event.preventDefault();
-
-                var easyMDEContainer = document.getElementsByClassName("EasyMDEContainer")[0];
-                easyMDEContainer.style.border = "solid 0.1rem red";
-
-                setTimeout(function() {
-                    easyMDEContainer.style.border = "";
-                }, 1500);
-            }
-        });
+        var easyMDE = new EasyMDE({ element: document.getElementById('content') });
     </script>
 </body>
 </html>

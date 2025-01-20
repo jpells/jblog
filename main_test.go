@@ -44,7 +44,7 @@ func TestHandleLogin(t *testing.T) {
 func testHandleLoginGet(t *testing.T) {
 	req, rr := createRequestResponse("GET", "/login", nil)
 	csrfMiddleware := csrf.Protect(csrfKey)
-	handler := csrfMiddleware(http.HandlerFunc(handleLogin))
+	handler := csrfMiddleware(http.HandlerFunc(handleLoginGet))
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusOK)
 	checkCsrfFormToken(t, rr)
@@ -54,7 +54,7 @@ func testHandleLoginPostInvalid(t *testing.T) {
 	req, rr := createRequestResponse("POST", "/login", strings.NewReader("username=wronguser&password=wrongpassword"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	handler := http.HandlerFunc(handleLogin)
+	handler := http.HandlerFunc(handleLoginPost)
 
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusSeeOther)
@@ -65,7 +65,7 @@ func testHandleLoginPostValid(t *testing.T) {
 	req, rr := createRequestResponse("POST", "/login", strings.NewReader("username="+username+"&password="+password))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	handler := http.HandlerFunc(handleLogin)
+	handler := http.HandlerFunc(handleLoginPost)
 
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusSeeOther)
@@ -74,9 +74,9 @@ func testHandleLoginPostValid(t *testing.T) {
 }
 
 func testHandleLoginCsrf(t *testing.T) {
-	handler := withCsrf(http.HandlerFunc(handleLogin))
-
 	req, rr := createRequestResponse("GET", "/login", nil)
+	csrfMiddleware := csrf.Protect(csrfKey)
+	handler := csrfMiddleware(http.HandlerFunc(handleLoginGet))
 	handler.ServeHTTP(rr, req)
 
 	csrfCookie := extractCsrfCookie(t, rr)
@@ -92,6 +92,8 @@ func testHandleLoginCsrf(t *testing.T) {
 	// Test without CSRF token
 	req, rr = createRequestResponse("POST", "/login", strings.NewReader("username="+username+"&password="+password))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	handler = csrfMiddleware(http.HandlerFunc(handleLoginPost))
 	handler.ServeHTTP(rr, req)
 
 	checkStatusCode(t, rr, http.StatusForbidden)
@@ -129,12 +131,8 @@ func TestHandleAdmin(t *testing.T) {
 }
 
 func TestHandleCreate(t *testing.T) {
-	req, rr := createRequestResponse("GET", "/create", nil)
+	req, rr := createRequestResponse("POST", "/create", nil)
 	handler := http.HandlerFunc(handleCreate)
-	handler.ServeHTTP(rr, req)
-	checkStatusCode(t, rr, http.StatusMethodNotAllowed)
-
-	req, rr = createRequestResponse("POST", "/create", nil)
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusBadRequest)
 
@@ -144,6 +142,29 @@ func TestHandleCreate(t *testing.T) {
 	checkStatusCode(t, rr, http.StatusSeeOther)
 	checkFileExists(t, "posts/test-post.md")
 	removeDummyFile(t, "posts/test-post.md")
+}
+
+func TestHandleEdit(t *testing.T) {
+	createDummyFile(t, "posts/test-post.md", "# Test Post\nThis is a test post.")
+	defer removeDummyFile(t, "posts/updated-test-post.md")
+
+	t.Run("GET /edit/test-post.md", func(t *testing.T) {
+		req, rr := createRequestResponse("GET", "/edit/test-post.md", nil)
+		handler := http.HandlerFunc(handleEditGet)
+		handler.ServeHTTP(rr, req)
+		checkStatusCode(t, rr, http.StatusOK)
+	})
+
+	t.Run("POST /edit/test-post.md", func(t *testing.T) {
+		form := "title=Updated+Test+Post&content=This+is+an+updated+test+post."
+		req, rr := createRequestResponse("POST", "/edit/test-post.md", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		handler := http.HandlerFunc(handleEditPost)
+		handler.ServeHTTP(rr, req)
+		checkStatusCode(t, rr, http.StatusSeeOther)
+		checkFileExists(t, "posts/updated-test-post.md")
+	})
 }
 
 // Test Utility Functions

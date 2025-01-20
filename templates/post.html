@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>{{.Title}} - Blog</title>
+    <title>{{.Post.Title}} - Blog</title>
     <style>
         body {
             max-width: 800px;
@@ -32,10 +32,15 @@
 </head>
 <body>
     <div class="back"><a href="/">← Back to Home</a></div>
-    <h1>{{.Title}}</h1>
-    <div class="date">{{.Date.Format "January 2, 2006"}}</div>
+    <h1>{{.Post.Title}}</h1>
+    <div class="date">{{.Post.Date.Format "January 2, 2006"}}</div>
     <div class="content">
-        {{.Content}}
+        {{.Post.Content}}
     </div>
+    {{if .IsAuthenticated}}
+    <div class="edit">
+        <a href="/edit/{{.Post.Filename}}">Edit Post</a>
+    </div>
+    {{end}}
 </body>
 </html>

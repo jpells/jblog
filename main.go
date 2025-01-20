@@ -70,12 +70,16 @@ func main() {
 // setupHandlers sets up the HTTP handlers
 func setupHandlers() *http.ServeMux {
 	router := http.NewServeMux()
-	router.HandleFunc("/", handleHome)
-	router.HandleFunc("/post/", handlePost)
-	router.HandleFunc("/login", handleLogin)
-	router.HandleFunc("/logout", handleLogout)
-	router.HandleFunc("/admin", basicAuth(handleAdmin))
-	router.HandleFunc("/create", basicAuth(handleCreate))
+
+	router.HandleFunc("GET /", handleHome)
+	router.HandleFunc("GET /post/", handlePost)
+	router.HandleFunc("GET /login", handleLoginGet)
+	router.HandleFunc("POST /login", handleLoginPost)
+	router.HandleFunc("GET /logout", handleLogout)
+	router.HandleFunc("GET /admin", basicAuth(handleAdmin))
+	router.HandleFunc("POST /create", basicAuth(handleCreate))
+	router.HandleFunc("GET /edit/", basicAuth(handleEditGet))
+	router.HandleFunc("POST /edit/", basicAuth(handleEditPost))
 
 	return router
 }
@@ -84,7 +88,9 @@ func setupHandlers() *http.ServeMux {
 func withSecurityHeaders(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'")
+			"default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "+
+				"style-src https://cdn.jsdelivr.net https://maxcdn.bootstrapcdn.com 'unsafe-inline'; "+
+				"img-src 'self'; font-src https://maxcdn.bootstrapcdn.com; connect-src https://cdn.jsdelivr.net;")
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -166,43 +172,49 @@ func handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	renderTemplate(w, "templates/post.html", post)
+	data := struct {
+		Post            BlogPost
+		IsAuthenticated bool
+	}{
+		Post:            post,
+		IsAuthenticated: isUserAuthenticated(r),
+	}
+
+	renderTemplate(w, "templates/post.html", data)
 }
 
-// handleLogin handles the login page request
-func handleLogin(w http.ResponseWriter, r *http.Request) {
-	log.Println("Handling login request with method:", r.Method)
+// handleLoginGet handles the login template rendering
+func handleLoginGet(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling login GET request")
 
-	if r.Method == "GET" {
-		data := struct {
-			CSRFField template.HTML
-		}{
-			CSRFField: csrf.TemplateField(r),
-		}
+	data := struct {
+		CSRFField template.HTML
+	}{
+		CSRFField: csrf.TemplateField(r),
+	}
+	renderTemplate(w, "templates/login.html", data)
+}
 
-		renderTemplate(w, "templates/login.html", data)
+// handleLoginPost handles the login processing
+func handleLoginPost(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling login POST request")
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	userUsername := r.FormValue("username")
+	userPassword := r.FormValue("password")
+
+	if authenticateUser(userUsername, userPassword) {
+		setAuthCookie(w)
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 
 		return
 	}
 
-	if r.Method == "POST" {
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Failed to parse form", http.StatusBadRequest)
-			return
-		}
-
-		userUsername := r.FormValue("username")
-		userPassword := r.FormValue("password")
-
-		if authenticateUser(userUsername, userPassword) {
-			setAuthCookie(w)
-			http.Redirect(w, r, "/admin", http.StatusSeeOther)
-
-			return
-		}
-
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 // handleLogout handles the logout request
@@ -229,11 +241,6 @@ func handleAdmin(w http.ResponseWriter, r *http.Request) {
 func handleCreate(w http.ResponseWriter, r *http.Request) {
 	log.Println("Handling create post request with method:", r.Method)
 
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	title := r.FormValue("title")
 	content := r.FormValue("content")
 
@@ -253,6 +260,81 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleEditGet handles the rendering of blog post edit page
+func handleEditGet(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling edit GET request")
+
+	filename := strings.TrimPrefix(r.URL.Path, "/edit/")
+	content, err := os.ReadFile(filepath.Join("posts", filename))
+
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Post not found", http.StatusNotFound)
+		} else {
+			sentry.CaptureException(err)
+			http.Error(w, "Error loading post", http.StatusInternalServerError)
+		}
+
+		return
+	}
+
+	data := struct {
+		Title     string
+		Content   string
+		Filename  string
+		CSRFField template.HTML
+	}{
+		Title:     strings.TrimSuffix(filename, ".md"),
+		Content:   string(content),
+		Filename:  filename,
+		CSRFField: csrf.TemplateField(r),
+	}
+
+	renderTemplate(w, "templates/edit.html", data)
+}
+
+// handleEditPost handles the the blog post update
+func handleEditPost(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling edit POST request")
+
+	filename := strings.TrimPrefix(r.URL.Path, "/edit/")
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	title := r.FormValue("title")
+	content := r.FormValue("content")
+
+	if title == "" || content == "" {
+		http.Error(w, "Title and content are required", http.StatusBadRequest)
+		return
+	}
+
+	newFilename := strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".md"
+	oldFilepath := filepath.Join("posts", filename)
+	newFilepath := filepath.Join("posts", newFilename)
+
+	if err := os.WriteFile(newFilepath, []byte(content), 0600); err != nil {
+		sentry.CaptureException(err)
+		http.Error(w, "Error saving post", http.StatusInternalServerError)
+
+		return
+	}
+
+	if oldFilepath != newFilepath {
+		if err := os.Remove(oldFilepath); err != nil {
+			sentry.CaptureException(err)
+			http.Error(w, "Error removing old post", http.StatusInternalServerError)
+
+			return
+		}
+	}
+
+	http.Redirect(w, r, "/post/"+newFilename, http.StatusSeeOther)
 }
 
 // Utility Functions

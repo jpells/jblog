@@ -5,7 +5,6 @@ linters:
     - dogsled        # Checks for assignments with too many blank identifiers
     - dupl           # Detects code duplication
     - errcheck       # Checks for unchecked errors
-    - exportloopref  # Checks for pointers to enclosing loop variables
     - forbidigo      # Forbids the use of certain identifiers
     - gocognit       # Checks the cognitive complexity of functions
     - goconst        # Finds repeated strings that could be replaced by constants

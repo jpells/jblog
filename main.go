@@ -8,13 +8,10 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/gomarkdown/markdown"
 	"github.com/gorilla/csrf"
 	"github.com/gorilla/securecookie"
 )
@@ -22,9 +19,19 @@ import (
 // BlogPost represents a single blog post
 type BlogPost struct {
 	Title    string
-	Content  template.HTML
+	Markdown string
+	HTML     template.HTML
 	Date     time.Time
 	Filename string
+}
+
+// BlogPostStore manages interactions with blog posts
+type BlogPostStore interface {
+	GetAllPosts() ([]BlogPost, error)
+	GetPost(filename string) (BlogPost, error)
+	CreatePost(post BlogPost) error
+	UpdatePost(filename string, post BlogPost) error
+	DeletePost(filename string) error
 }
 
 var (
@@ -54,8 +61,11 @@ func main() {
 		sentry.CaptureException(err)
 		log.Fatal("Failed to create posts directory:", err)
 	} else {
+		// Initialize the blog post store
+		postStore := NewFileSystemBlogPostStore("posts")
+
 		// Set up HTTP handlers
-		router := setupHandlers()
+		router := setupHandlers(postStore)
 
 		// Wrap the router with security middleware
 		secureRouter := withCsrf(withSecurityHeaders(router))
@@ -68,18 +78,28 @@ func main() {
 }
 
 // setupHandlers sets up the HTTP handlers
-func setupHandlers() *http.ServeMux {
+func setupHandlers(postStore BlogPostStore) *http.ServeMux {
 	router := http.NewServeMux()
 
-	router.HandleFunc("GET /", handleHome)
-	router.HandleFunc("GET /post/", handlePost)
+	router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		handleHome(w, r, postStore)
+	})
+	router.HandleFunc("GET /post/", func(w http.ResponseWriter, r *http.Request) {
+		handlePost(w, r, postStore)
+	})
 	router.HandleFunc("GET /login", handleLoginGet)
 	router.HandleFunc("POST /login", handleLoginPost)
 	router.HandleFunc("GET /logout", handleLogout)
 	router.HandleFunc("GET /admin", basicAuth(handleAdmin))
-	router.HandleFunc("POST /create", basicAuth(handleCreate))
-	router.HandleFunc("GET /edit/", basicAuth(handleEditGet))
-	router.HandleFunc("POST /edit/", basicAuth(handleEditPost))
+	router.HandleFunc("POST /create", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+		handleCreate(w, r, postStore)
+	}))
+	router.HandleFunc("GET /edit/", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+		handleEditGet(w, r, postStore)
+	}))
+	router.HandleFunc("POST /edit/", basicAuth(func(w http.ResponseWriter, r *http.Request) {
+		handleEditPost(w, r, postStore)
+	}))
 
 	return router
 }
@@ -128,7 +148,7 @@ func withSentry(handler http.Handler) http.Handler {
 // Handlers
 
 // handleHome handles the home page request
-func handleHome(w http.ResponseWriter, r *http.Request) {
+func handleHome(w http.ResponseWriter, r *http.Request, postStore BlogPostStore) {
 	log.Println("Handling home page request")
 
 	if r.URL.Path != "/" {
@@ -136,7 +156,7 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := loadBlogPosts()
+	posts, err := postStore.GetAllPosts()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		sentry.CaptureException(err)
@@ -156,11 +176,11 @@ func handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePost handles the individual post page request
-func handlePost(w http.ResponseWriter, r *http.Request) {
+func handlePost(w http.ResponseWriter, r *http.Request, postStore BlogPostStore) {
 	log.Println("Handling post page request for:", r.URL.Path)
 
 	filename := strings.TrimPrefix(r.URL.Path, "/post/")
-	post, err := loadBlogPost(filename)
+	post, err := postStore.GetPost(filename)
 
 	if err != nil {
 		http.Error(w, "Post not found", http.StatusNotFound)
@@ -238,7 +258,7 @@ func handleAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreate handles the creation of a new blog post
-func handleCreate(w http.ResponseWriter, r *http.Request) {
+func handleCreate(w http.ResponseWriter, r *http.Request, postStore BlogPostStore) {
 	log.Println("Handling create post request with method:", r.Method)
 
 	title := r.FormValue("title")
@@ -249,10 +269,12 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".md"
-	filepath := filepath.Join("posts", filename)
+	post := BlogPost{
+		Title:    title,
+		Markdown: content,
+	}
 
-	if err := os.WriteFile(filepath, []byte(content), 0600); err != nil {
+	if err := postStore.CreatePost(post); err != nil {
 		http.Error(w, "Error saving post", http.StatusInternalServerError)
 		sentry.CaptureException(err)
 
@@ -263,11 +285,11 @@ func handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleEditGet handles the rendering of blog post edit page
-func handleEditGet(w http.ResponseWriter, r *http.Request) {
+func handleEditGet(w http.ResponseWriter, r *http.Request, postStore BlogPostStore) {
 	log.Println("Handling edit GET request")
 
 	filename := strings.TrimPrefix(r.URL.Path, "/edit/")
-	content, err := os.ReadFile(filepath.Join("posts", filename))
+	post, err := postStore.GetPost(filename)
 
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -286,8 +308,8 @@ func handleEditGet(w http.ResponseWriter, r *http.Request) {
 		Filename  string
 		CSRFField template.HTML
 	}{
-		Title:     strings.TrimSuffix(filename, ".md"),
-		Content:   string(content),
+		Title:     post.Title,
+		Content:   post.Markdown,
 		Filename:  filename,
 		CSRFField: csrf.TemplateField(r),
 	}
@@ -295,8 +317,8 @@ func handleEditGet(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, "templates/edit.html", data)
 }
 
-// handleEditPost handles the the blog post update
-func handleEditPost(w http.ResponseWriter, r *http.Request) {
+// handleEditPost handles the blog post update
+func handleEditPost(w http.ResponseWriter, r *http.Request, postStore BlogPostStore) {
 	log.Println("Handling edit POST request")
 
 	filename := strings.TrimPrefix(r.URL.Path, "/edit/")
@@ -314,79 +336,23 @@ func handleEditPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newFilename := strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".md"
-	oldFilepath := filepath.Join("posts", filename)
-	newFilepath := filepath.Join("posts", newFilename)
+	post := BlogPost{
+		Title:    title,
+		Markdown: content,
+	}
 
-	if err := os.WriteFile(newFilepath, []byte(content), 0600); err != nil {
+	if err := postStore.UpdatePost(filename, post); err != nil {
 		sentry.CaptureException(err)
 		http.Error(w, "Error saving post", http.StatusInternalServerError)
 
 		return
 	}
 
-	if oldFilepath != newFilepath {
-		if err := os.Remove(oldFilepath); err != nil {
-			sentry.CaptureException(err)
-			http.Error(w, "Error removing old post", http.StatusInternalServerError)
-
-			return
-		}
-	}
-
+	newFilename := strings.ToLower(strings.ReplaceAll(title, " ", "-")) + ".md"
 	http.Redirect(w, r, "/post/"+newFilename, http.StatusSeeOther)
 }
 
 // Utility Functions
-
-// loadBlogPosts loads all blog posts from the posts directory
-func loadBlogPosts() ([]BlogPost, error) {
-	files, err := filepath.Glob("posts/*.md")
-	if err != nil {
-		return nil, err
-	}
-
-	posts := make([]BlogPost, 0, len(files))
-
-	for _, file := range files {
-		post, err := loadBlogPost(filepath.Base(file))
-		if err != nil {
-			return posts, err
-		}
-
-		posts = append(posts, post)
-	}
-
-	// Sort posts by descending date
-	sort.Slice(posts, func(i, j int) bool {
-		return posts[i].Date.After(posts[j].Date)
-	})
-
-	return posts, nil
-}
-
-// loadBlogPost loads a single blog post from a file
-func loadBlogPost(filename string) (BlogPost, error) {
-	content, err := os.ReadFile(filepath.Join("posts", filename))
-	if err != nil {
-		return BlogPost{}, err
-	}
-
-	htmlContent := markdown.ToHTML(content, nil, nil)
-	title := strings.TrimSuffix(filename, ".md")
-
-	info, err := os.Stat(filepath.Join("posts", filename))
-	if err != nil {
-		return BlogPost{}, err
-	}
-
-	return BlogPost{
-		Title:    title,
-		Content:  template.HTML(htmlContent),
-		Date:     info.ModTime(),
-		Filename: filename,
-	}, nil
-}
 
 // basicAuth is a middleware that provides basic authentication
 func basicAuth(handler http.HandlerFunc) http.HandlerFunc {

@@ -38,6 +38,20 @@ func TestFileSystemBlogPostStore_GetAllPosts(t *testing.T) {
 		t.Fatalf("Failed to create post 2: %v", err)
 	}
 
+	// Set the file modification times for GitHub action runner
+	post1Filename := strings.ToLower(strings.ReplaceAll(post1.Title, " ", "-")) + ".md"
+	post2Filename := strings.ToLower(strings.ReplaceAll(post2.Title, " ", "-")) + ".md"
+
+	err = os.Chtimes(filepath.Join(store.postsDir, post1Filename), post1.Date, post1.Date)
+	if err != nil {
+		t.Fatalf("Failed to set modification time for post 1: %v", err)
+	}
+
+	err = os.Chtimes(filepath.Join(store.postsDir, post2Filename), post2.Date, post2.Date)
+	if err != nil {
+		t.Fatalf("Failed to set modification time for post 2: %v", err)
+	}
+
 	posts, err := store.GetAllPosts()
 	if err != nil {
 		t.Fatalf("Failed to get all posts: %v", err)

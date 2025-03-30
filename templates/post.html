@@ -35,7 +35,7 @@
     <h1>{{.Post.Title}}</h1>
     <div class="date">{{.Post.Date.Format "January 2, 2006"}}</div>
     <div class="content">
-        {{.Post.Content}}
+        {{.Post.HTML}}
     </div>
     {{if .IsAuthenticated}}
     <div class="edit">

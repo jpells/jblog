@@ -5,11 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gorilla/csrf"
 	"golang.org/x/net/html"
@@ -18,18 +16,29 @@ import (
 // Test Handlers
 
 func TestHandleHome(t *testing.T) {
+	postStore := NewInMemoryBlogPostStore()
 	req, rr := createRequestResponse("GET", "/", nil)
-	handler := http.HandlerFunc(handleHome)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleHome(w, r, postStore)
+	})
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusOK)
 }
 
 func TestHandlePost(t *testing.T) {
-	createDummyFile(t, "posts/test-post.md", "# Test Post\nThis is a test post.")
-	defer removeDummyFile(t, "posts/test-post.md")
+	postStore := NewInMemoryBlogPostStore()
+	err := postStore.CreatePost(BlogPost{
+		Title:    "Test Post",
+		Markdown: "# Test Post\nThis is a test post."})
+
+	if err != nil {
+		t.Fatalf("Failed to create post: %v", err)
+	}
 
 	req, rr := createRequestResponse("GET", "/post/test-post.md", nil)
-	handler := http.HandlerFunc(handlePost)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlePost(w, r, postStore)
+	})
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusOK)
 }
@@ -131,8 +140,12 @@ func TestHandleAdmin(t *testing.T) {
 }
 
 func TestHandleCreate(t *testing.T) {
+	postStore := NewInMemoryBlogPostStore()
+
 	req, rr := createRequestResponse("POST", "/create", nil)
-	handler := http.HandlerFunc(handleCreate)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleCreate(w, r, postStore)
+	})
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusBadRequest)
 
@@ -140,17 +153,24 @@ func TestHandleCreate(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	handler.ServeHTTP(rr, req)
 	checkStatusCode(t, rr, http.StatusSeeOther)
-	checkFileExists(t, "posts/test-post.md")
-	removeDummyFile(t, "posts/test-post.md")
+	checkPostExists(t, postStore, "test-post.md")
 }
 
 func TestHandleEdit(t *testing.T) {
-	createDummyFile(t, "posts/test-post.md", "# Test Post\nThis is a test post.")
-	defer removeDummyFile(t, "posts/updated-test-post.md")
+	postStore := NewInMemoryBlogPostStore()
+	err := postStore.CreatePost(BlogPost{
+		Title:    "Test Post",
+		Markdown: "# Test Post\nThis is a test post."})
+
+	if err != nil {
+		t.Fatalf("Failed to create post: %v", err)
+	}
 
 	t.Run("GET /edit/test-post.md", func(t *testing.T) {
 		req, rr := createRequestResponse("GET", "/edit/test-post.md", nil)
-		handler := http.HandlerFunc(handleEditGet)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleEditGet(w, r, postStore)
+		})
 		handler.ServeHTTP(rr, req)
 		checkStatusCode(t, rr, http.StatusOK)
 	})
@@ -160,50 +180,16 @@ func TestHandleEdit(t *testing.T) {
 		req, rr := createRequestResponse("POST", "/edit/test-post.md", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-		handler := http.HandlerFunc(handleEditPost)
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleEditPost(w, r, postStore)
+		})
 		handler.ServeHTTP(rr, req)
 		checkStatusCode(t, rr, http.StatusSeeOther)
-		checkFileExists(t, "posts/updated-test-post.md")
+		checkPostExists(t, postStore, "updated-test-post.md")
 	})
 }
 
 // Test Utility Functions
-
-func TestLoadBlogPosts(t *testing.T) {
-	createDummyFile(t, "posts/test-post-1.md", "# Test Post 1\nThis is a test post 1.")
-	createDummyFile(t, "posts/test-post-2.md", "# Test Post 2\nThis is a test post 2.")
-
-	defer removeDummyFile(t, "posts/test-post-1.md")
-	defer removeDummyFile(t, "posts/test-post-2.md")
-
-	posts, err := loadBlogPosts()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(posts) != 2 {
-		t.Errorf("Incorrect number of posts loaded: got %v want %v", len(posts), 2)
-	}
-
-	if posts[0].Title != "test-post-2" || posts[1].Title != "test-post-1" {
-		t.Error("Posts are not sorted correctly", posts)
-	}
-}
-
-func TestLoadBlogPost(t *testing.T) {
-	createDummyFile(t, "posts/test-post.md", "# Test Post\nThis is a test post.")
-	defer removeDummyFile(t, "posts/test-post.md")
-
-	post, err := loadBlogPost("test-post.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if post.Title != "test-post" || !strings.Contains(string(post.Content), "Test Post") {
-		t.Error("Post data is incorrect")
-	}
-}
-
 func TestBasicAuth(t *testing.T) {
 	req, rr := createRequestResponse("GET", "/admin", nil)
 	handler := basicAuth(handleAdmin)
@@ -320,37 +306,6 @@ func checkClearedCookie(t *testing.T, rr *httptest.ResponseRecorder) {
 	}
 }
 
-func createDummyFile(t *testing.T, path, content string) {
-	dir := "posts"
-
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.Mkdir(dir, 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Explicitly set the file modification time for GitHub actions to sort properly
-	if err := os.Chtimes(path, time.Now(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func removeDummyFile(t *testing.T, path string) {
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func checkFileExists(t *testing.T, path string) {
-	if _, err := os.Stat(path); err != nil {
-		t.Error("Post file was not created")
-	}
-}
-
 // checkCsrfFormToken checks if the CSRF token is present in the form.
 func checkCsrfFormToken(t *testing.T, rr *httptest.ResponseRecorder) {
 	if !strings.Contains(rr.Body.String(), `name="gorilla.csrf.Token"`) {
@@ -424,4 +379,12 @@ func getInputNameAndValue(n *html.Node) (string, string) {
 	}
 
 	return name, value
+}
+
+// checkPostExists checks if a post with the given ID exists in the store.
+func checkPostExists(t *testing.T, store *InMemoryBlogPostStore, id string) {
+	_, err := store.GetPost(id)
+	if err != nil {
+		t.Errorf("Post with ID '%s' does not exist", id)
+	}
 }

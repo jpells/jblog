@@ -4,7 +4,7 @@ tasks:
   run:
     desc: Run the application
     cmds:
-      - go run main.go
+      - go run ./...
     env:
       GO_ENV: development
 

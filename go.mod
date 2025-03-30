@@ -8,9 +8,7 @@ require (
 	github.com/gorilla/csrf v1.7.2
 	github.com/gorilla/securecookie v1.1.2
 	golang.org/x/net v0.23.0
+	golang.org/x/text v0.14.0
 )
 
-require (
-	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
-)
+require golang.org/x/sys v0.18.0 // indirect
